@@ -49,7 +49,8 @@ typedef enum
 {
     OV5648MIPI_SENSOR_MODE_INIT,
     OV5648MIPI_SENSOR_MODE_PREVIEW,  
-    OV5648MIPI_SENSOR_MODE_CAPTURE
+    OV5648MIPI_SENSOR_MODE_CAPTURE,
+    OV5648MIPI_SENSOR_MODE_VIDEO
 } OV5648MIPI_SENSOR_MODE;
 
 /* SENSOR PRIVATE STRUCT */
@@ -70,11 +71,18 @@ typedef struct OV5648MIPI_sensor_STRUCT
     kal_uint16 shutter;
     kal_uint16 gain;
     kal_uint32 pclk;
+
+	kal_uint32 pvPclk;
+	kal_uint32 videoPclk;
+	kal_uint32 capPclk;
+	
     kal_uint16 frame_length;
     kal_uint16 line_length;
 
     kal_uint16 dummy_pixel;
     kal_uint16 dummy_line;
+
+    kal_uint32 maxExposureLines;
 } OV5648MIPI_sensor_struct;
 
 static OV5648MIPI_sensor_struct OV5648MIPI_sensor =
@@ -94,6 +102,9 @@ static OV5648MIPI_sensor_struct OV5648MIPI_sensor =
     .shutter = 0x3D0,  
     .gain = 0x100,
     .pclk = OV5648MIPI_PREVIEW_CLK,
+    .pvPclk = OV5648MIPI_PREVIEW_CLK,
+    .capPclk = OV5648MIPI_CAPTURE_CLK,
+    .videoPclk = OV5648MIPI_VIDEO_CLK,
     .frame_length = OV5648MIPI_PV_PERIOD_LINE_NUMS,
     .line_length = OV5648MIPI_PV_PERIOD_PIXEL_NUMS,
     .dummy_pixel = 0,
@@ -109,7 +120,7 @@ kal_bool OV5648MIPIDuringTestPattern = KAL_FALSE;
 
 extern int iReadRegI2C(u8 *a_pSendData , u16 a_sizeSendData, u8 * a_pRecvData, u16 a_sizeRecvData, u16 i2cId);
 extern int iWriteRegI2C(u8 *a_pSendData , u16 a_sizeSendData, u16 i2cId);
-void OV5648MIPISetMaxFrameRate(UINT16 u2FrameRate);
+//void OV5648MIPISetMaxFrameRate(UINT16 u2FrameRate);
 
 
 kal_uint16 OV5648MIPI_read_cmos_sensor(kal_uint32 addr)
@@ -299,7 +310,7 @@ kal_uint32 GB_GR_Ratio_Typical = GB_GR_Typical;
 kal_uint16 update_otp(void)
 {	
 	struct OV5648MIPI_otp_struct current_otp;
-	kal_uint32 i, otp_index,temp;
+	kal_uint32 i, otp_index;
 	kal_uint32 R_gain, B_gain, G_gain, G_gain_R,G_gain_B;
 	kal_uint32 rg, bg;
 
@@ -393,68 +404,186 @@ kal_uint16 update_otp(void)
 
 static void OV5648MIPI_Write_Shutter(kal_uint16 iShutter)
 {
-#if 0
-    kal_uint16 extra_line = 0;
-#endif
-        
-    kal_uint16 frame_length = 0;
+	kal_uint32 min_framelength = 0, max_shutter=0;
+	kal_uint32 extra_lines = 0;
+    kal_uint32 frame_length = 0;
+    kal_uint32 line_length = 0;
+    unsigned long flags;
 
 
     #ifdef OV5648MIPI_DRIVER_TRACE
         SENSORDB("iShutter =  %d", iShutter);
     #endif
-    
-    /* 0x3500, 0x3501, 0x3502 will increase VBLANK to get exposure larger than frame exposure */
-    /* AE doesn't update sensor gain at capture mode, thus extra exposure lines must be updated here. */
-    if (!iShutter) iShutter = 1;
 
-    if(OV5648MIPIAutoFlickerMode){
-        if(OV5648MIPI_sensor.video_mode == KAL_FALSE){
-            if(mCurrentScenarioId == MSDK_SCENARIO_ID_CAMERA_ZSD)
-            {
-                //Change frame 14.7fps ~ 14.9fps to do auto flick
-                OV5648MIPISetMaxFrameRate(148);
-            }
-            else
-            {
-                //Change frame 29.5fps ~ 29.8fps to do auto flick
-                OV5648MIPISetMaxFrameRate(296);
-            }
+    if(OV5648MIPIAutoFlickerMode)
+    {
+		if (OV5648MIPI_SENSOR_MODE_PREVIEW  == OV5648MIPI_sensor.ov5648mipi_sensor_mode)
+		{
+			line_length = OV5648MIPI_PV_PERIOD_PIXEL_NUMS + OV5648MIPI_sensor.dummy_pixel;
+			max_shutter = OV5648MIPI_PV_PERIOD_LINE_NUMS + OV5648MIPI_sensor.dummy_line;
+		}
+        else if (OV5648MIPI_SENSOR_MODE_VIDEO  == OV5648MIPI_sensor.ov5648mipi_sensor_mode)
+        {
+            line_length = OV5648MIPI_PV_PERIOD_PIXEL_NUMS + OV5648MIPI_sensor.dummy_pixel;
+            max_shutter = OV5648MIPI_PV_PERIOD_LINE_NUMS + OV5648MIPI_sensor.dummy_line;
         }
-    }
+		else
+		{
+			line_length = OV5648MIPI_FULL_PERIOD_PIXEL_NUMS + OV5648MIPI_sensor.dummy_pixel;
+			max_shutter = OV5648MIPI_FULL_PERIOD_LINE_NUMS + OV5648MIPI_sensor.dummy_line;
+		}
 
-    // OV Recommend Solution
-    // if shutter bigger than frame_length, should extend frame length first
-#if 0
+		switch(mCurrentScenarioId)
+		{
+        	case MSDK_SCENARIO_ID_CAMERA_ZSD:
+			case MSDK_SCENARIO_ID_CAMERA_CAPTURE_JPEG:
+				SENSORDB("AutoFlickerMode!!! MSDK_SCENARIO_ID_CAMERA_ZSD  0!!\n");
+				min_framelength = max_shutter;// capture max_fps 24,no need calculate
+				break;
+			case MSDK_SCENARIO_ID_VIDEO_PREVIEW:
+				if(OV5648MIPI_sensor.FixedFps == 30)
+				{
+					min_framelength = (OV5648MIPI_sensor.videoPclk) /(OV5648MIPI_PV_PERIOD_PIXEL_NUMS + OV5648MIPI_sensor.dummy_pixel)/285*10 ;
+				}
+				else if(OV5648MIPI_sensor.FixedFps == 15)
+				{
+					min_framelength = (OV5648MIPI_sensor.videoPclk) /(OV5648MIPI_PV_PERIOD_PIXEL_NUMS + OV5648MIPI_sensor.dummy_pixel)/146*10 ;
+				}
+				else
+				{
+					min_framelength = max_shutter;
+				}
+				break;
+			default:
+				min_framelength = (OV5648MIPI_sensor.pvPclk) /(OV5648MIPI_PV_PERIOD_PIXEL_NUMS + OV5648MIPI_sensor.dummy_pixel)/285*10 ;
+    			break;
+		}
 
-	if(iShutter > (OV5648MIPI_sensor.frame_length - 4))
-		extra_line = iShutter - (OV5648MIPI_sensor.frame_length - 4);
+        SENSORDB("AutoFlickerMode!!! min_framelength for AutoFlickerMode = %d (0x%x)\n", min_framelength, min_framelength);
+        SENSORDB("max framerate(10 base) autofilker = %d\n",(OV5648MIPI_sensor.pvPclk)*10 /line_length/min_framelength);
+        
+        if (iShutter < 3)
+            iShutter = 3;
+        
+        if (iShutter > max_shutter-4)
+            extra_lines = iShutter - max_shutter + 4;
+        else
+            extra_lines = 0;
+        
+        if (OV5648MIPI_SENSOR_MODE_PREVIEW  == OV5648MIPI_sensor.ov5648mipi_sensor_mode)
+        {
+            frame_length = OV5648MIPI_PV_PERIOD_LINE_NUMS + OV5648MIPI_sensor.dummy_line + extra_lines ;
+        }
+        else if (OV5648MIPI_SENSOR_MODE_VIDEO  == OV5648MIPI_sensor.ov5648mipi_sensor_mode)
+        {
+            frame_length = OV5648MIPI_PV_PERIOD_LINE_NUMS + OV5648MIPI_sensor.dummy_line + extra_lines ;
+        }        
+        else
+        {
+            frame_length = OV5648MIPI_FULL_PERIOD_LINE_NUMS + OV5648MIPI_sensor.dummy_line + extra_lines ;
+        }
+        SENSORDB("frame_length 0= %d\n",frame_length);
+
+
+        if (frame_length < min_framelength)
+        {       
+            switch(mCurrentScenarioId)
+            {
+            case MSDK_SCENARIO_ID_CAMERA_ZSD:
+            case MSDK_SCENARIO_ID_CAMERA_CAPTURE_JPEG:
+                extra_lines = min_framelength- (OV5648MIPI_FULL_PERIOD_LINE_NUMS+ OV5648MIPI_sensor.dummy_line);
+                break;
+            case MSDK_SCENARIO_ID_VIDEO_PREVIEW:
+                extra_lines = min_framelength- (OV5648MIPI_PV_PERIOD_LINE_NUMS+ OV5648MIPI_sensor.dummy_line);
+                break;
+            default:
+                extra_lines = min_framelength- (OV5648MIPI_PV_PERIOD_LINE_NUMS+ OV5648MIPI_sensor.dummy_line);
+                break;
+            }
+            frame_length = min_framelength;
+        }
+        
+        SENSORDB("frame_length 1= %d\n", frame_length);
+
+        
+        //Set total frame length
+        OV5648MIPI_write_cmos_sensor(0x380e, (frame_length >> 8) & 0xFF);
+        OV5648MIPI_write_cmos_sensor(0x380f, frame_length & 0xFF);
+        
+        spin_lock_irqsave(&ov5648mipi_drv_lock,flags);
+        OV5648MIPI_sensor.maxExposureLines = frame_length;
+        OV5648MIPI_sensor.line_length = line_length;
+        OV5648MIPI_sensor.frame_length = frame_length;
+        spin_unlock_irqrestore(&ov5648mipi_drv_lock,flags);
+        
+        //Set shutter (Coarse integration time, uint: lines.)
+        OV5648MIPI_write_cmos_sensor(0x3500, (iShutter>>12) & 0x0F);
+        OV5648MIPI_write_cmos_sensor(0x3501, (iShutter>>4) & 0xFF);
+        OV5648MIPI_write_cmos_sensor(0x3502, (iShutter<<4) & 0xF0);  /* Don't use the fraction part. */
+        
+        SENSORDB("frame_length 2= %d\n",frame_length);
+        SENSORDB("shutter=%d, extra_lines=%d, line_length=%d, frame_length=%d\n", iShutter, extra_lines, line_length, frame_length);
+    }    
 	else
-	    extra_line = 0;
+	{
+		if (OV5648MIPI_SENSOR_MODE_PREVIEW  == OV5648MIPI_sensor.ov5648mipi_sensor_mode)
+		{
+			line_length = OV5648MIPI_PV_PERIOD_PIXEL_NUMS + OV5648MIPI_sensor.dummy_pixel;
+			max_shutter = OV5648MIPI_PV_PERIOD_LINE_NUMS + OV5648MIPI_sensor.dummy_line;
+		}
+        else if (OV5648MIPI_SENSOR_MODE_VIDEO  == OV5648MIPI_sensor.ov5648mipi_sensor_mode)
+        {
+			line_length = OV5648MIPI_PV_PERIOD_PIXEL_NUMS + OV5648MIPI_sensor.dummy_pixel;
+			max_shutter = OV5648MIPI_PV_PERIOD_LINE_NUMS + OV5648MIPI_sensor.dummy_line;
+        }         
+		else
+		{
+			line_length = OV5648MIPI_FULL_PERIOD_PIXEL_NUMS + OV5648MIPI_sensor.dummy_pixel;
+			max_shutter = OV5648MIPI_FULL_PERIOD_LINE_NUMS + OV5648MIPI_sensor.dummy_line;
+		}
 
-	// Update Extra shutter
-	OV5648MIPI_write_cmos_sensor(0x350c, (extra_line >> 8) & 0xFF);	
-	OV5648MIPI_write_cmos_sensor(0x350d, (extra_line) & 0xFF); 
-	
-#endif
 
-#if 1  
+        if (iShutter < 3)
+            iShutter = 3;
+        
+        if (iShutter > max_shutter-4)
+            extra_lines = iShutter - max_shutter + 4;
+        else
+            extra_lines = 0;
+        
+        if (OV5648MIPI_SENSOR_MODE_PREVIEW  == OV5648MIPI_sensor.ov5648mipi_sensor_mode)
+        {
+            frame_length = OV5648MIPI_PV_PERIOD_LINE_NUMS + OV5648MIPI_sensor.dummy_line + extra_lines ;
+        }
+        else if (OV5648MIPI_SENSOR_MODE_VIDEO  == OV5648MIPI_sensor.ov5648mipi_sensor_mode)
+        {
+            frame_length = OV5648MIPI_PV_PERIOD_LINE_NUMS + OV5648MIPI_sensor.dummy_line + extra_lines ;
+        }        
+        else
+        {
+            frame_length = OV5648MIPI_FULL_PERIOD_LINE_NUMS + OV5648MIPI_sensor.dummy_line + extra_lines ;
+        }
+        SENSORDB("frame_length 0= %d\n",frame_length);
 
-    if(iShutter > OV5648MIPI_sensor.frame_length - 4)
-        frame_length = iShutter + 4;
-    else
-        frame_length = OV5648MIPI_sensor.frame_length;
+        //Set total frame length
+        OV5648MIPI_write_cmos_sensor(0x380e, (frame_length >> 8) & 0xFF);
+        OV5648MIPI_write_cmos_sensor(0x380f, frame_length & 0xFF);
+        
 
-    // Extend frame length
-    OV5648MIPI_write_cmos_sensor(0x380f, frame_length & 0xFF);
-    OV5648MIPI_write_cmos_sensor(0x380e, frame_length >> 8);
-    
-#endif
-
-    // Update Shutter
-    OV5648MIPI_write_cmos_sensor(0x3502, (iShutter << 4) & 0xFF);
-    OV5648MIPI_write_cmos_sensor(0x3501, (iShutter >> 4) & 0xFF);     
-    OV5648MIPI_write_cmos_sensor(0x3500, (iShutter >> 12) & 0x0F);
+        spin_lock_irqsave(&ov5648mipi_drv_lock,flags);
+        OV5648MIPI_sensor.maxExposureLines = frame_length;
+        OV5648MIPI_sensor.line_length = line_length;
+        OV5648MIPI_sensor.frame_length = frame_length;
+        spin_unlock_irqrestore(&ov5648mipi_drv_lock,flags);
+        
+        //Set shutter (Coarse integration time, uint: lines.)
+        OV5648MIPI_write_cmos_sensor(0x3500, (iShutter>>12) & 0x0F);
+        OV5648MIPI_write_cmos_sensor(0x3501, (iShutter>>4) & 0xFF);
+        OV5648MIPI_write_cmos_sensor(0x3502, (iShutter<<4) & 0xF0);  /* Don't use the fraction part. */
+        
+        SENSORDB("frame_length 2= %d\n",frame_length);
+        SENSORDB("shutter=%d, extra_lines=%d, line_length=%d, frame_length=%d\n", iShutter, extra_lines, line_length, frame_length);
+	}
 }   /*  OV5648MIPI_Write_Shutter  */
 
 static void OV5648MIPI_Set_Dummy(const kal_uint16 iDummyPixels, const kal_uint16 iDummyLines)
@@ -468,7 +597,14 @@ static void OV5648MIPI_Set_Dummy(const kal_uint16 iDummyPixels, const kal_uint16
     if (OV5648MIPI_SENSOR_MODE_PREVIEW == OV5648MIPI_sensor.ov5648mipi_sensor_mode){
         line_length = OV5648MIPI_PV_PERIOD_PIXEL_NUMS + iDummyPixels;
         frame_length = OV5648MIPI_PV_PERIOD_LINE_NUMS + iDummyLines;
-    }else{
+    }
+    else if (OV5648MIPI_SENSOR_MODE_VIDEO  == OV5648MIPI_sensor.ov5648mipi_sensor_mode)
+    {
+        line_length = OV5648MIPI_PV_PERIOD_PIXEL_NUMS + iDummyPixels;
+        frame_length = OV5648MIPI_PV_PERIOD_LINE_NUMS + iDummyLines;
+    }      
+    else
+    {
         line_length = OV5648MIPI_FULL_PERIOD_PIXEL_NUMS + iDummyPixels;
         frame_length = OV5648MIPI_FULL_PERIOD_LINE_NUMS + iDummyLines;
     }
@@ -485,7 +621,7 @@ static void OV5648MIPI_Set_Dummy(const kal_uint16 iDummyPixels, const kal_uint16
     
 }   /*  OV5648MIPI_Set_Dummy  */
 
-
+/*
 void OV5648MIPISetMaxFrameRate(UINT16 u2FrameRate)
 {
     kal_int16 dummy_line;
@@ -509,9 +645,9 @@ void OV5648MIPISetMaxFrameRate(UINT16 u2FrameRate)
         
     if (dummy_line < 0) dummy_line = 0;
 
-    OV5648MIPI_Set_Dummy(OV5648MIPI_sensor.dummy_pixel, dummy_line); /* modify dummy_pixel must gen AE table again */
-}   /*  OV5648MIPISetMaxFrameRate  */
-
+    OV5648MIPI_Set_Dummy(OV5648MIPI_sensor.dummy_pixel, dummy_line); 
+}
+*/
 
 /*************************************************************************
 * FUNCTION
@@ -1086,8 +1222,8 @@ static void OV5648MIPI_Sensor_Init(void)
     OV5648MIPI_write_cmos_sensor(0x3817, 0x00); // hsync start
 
     // Horizontal binning
-    OV5648MIPI_write_cmos_sensor(0x3820, 0x0e); //0x08 flip off, v bin off
-    OV5648MIPI_write_cmos_sensor(0x3821, 0x01); //0x07 mirror on, h bin on
+    OV5648MIPI_write_cmos_sensor(0x3820, 0x08); // flip off, v bin off
+    OV5648MIPI_write_cmos_sensor(0x3821, 0x07); // mirror on, h bin on
     
     OV5648MIPI_write_cmos_sensor(0x3826, 0x03);
     OV5648MIPI_write_cmos_sensor(0x3829, 0x00);
@@ -1254,8 +1390,8 @@ static void OV5648MIPI_Preview_Setting(void)
        *   ISP and Sensor flip or mirror register bit should be the same!!
        *
        ********************************************************/
-    OV5648MIPI_write_cmos_sensor(0x3820, 0x0e); //0x08 flip off, v bin off
-    OV5648MIPI_write_cmos_sensor(0x3821, 0x01); //0x07 mirror on, h bin on
+    OV5648MIPI_write_cmos_sensor(0x3820, 0x08); // flip off, v bin off
+    OV5648MIPI_write_cmos_sensor(0x3821, 0x07); // mirror on, h bin on
 
     
     OV5648MIPI_write_cmos_sensor(0x4004, 0x02); // black line number
@@ -1339,8 +1475,8 @@ static void OV5648MIPI_Capture_Setting(void)
        *   ISP and Sensor flip or mirror register bit should be the same!!
        *
        ********************************************************/
-    OV5648MIPI_write_cmos_sensor(0x3820, 0x46); //0x40 flip off, v bin off
-    OV5648MIPI_write_cmos_sensor(0x3821, 0x00); //0x06 mirror on, v bin off
+    OV5648MIPI_write_cmos_sensor(0x3820, 0x40); // flip off, v bin off
+    OV5648MIPI_write_cmos_sensor(0x3821, 0x06); // mirror on, v bin off
 
     
     OV5648MIPI_write_cmos_sensor(0x4004, 0x04); // black line number
@@ -1489,16 +1625,42 @@ UINT32 OV5648MIPIPreview(MSDK_SENSOR_EXPOSURE_WINDOW_STRUCT *image_window,
 
     spin_lock(&ov5648mipi_drv_lock);
     OV5648MIPI_sensor.ov5648mipi_sensor_mode = OV5648MIPI_SENSOR_MODE_PREVIEW;
-    OV5648MIPI_sensor.pclk = OV5648MIPI_PREVIEW_CLK;
+    OV5648MIPI_sensor.pvPclk = OV5648MIPI_PREVIEW_CLK;
     OV5648MIPI_sensor.video_mode = KAL_FALSE;
     OV5648MIPI_sensor.line_length = OV5648MIPI_PV_PERIOD_PIXEL_NUMS;
     OV5648MIPI_sensor.frame_length = OV5648MIPI_PV_PERIOD_LINE_NUMS;     
+    OV5648MIPI_sensor.dummy_pixel = 0;
+    OV5648MIPI_sensor.dummy_line = 0;
     spin_unlock(&ov5648mipi_drv_lock);
 
     SENSORDB("Exit!");
     
     return ERROR_NONE;
 }   /*  OV5648MIPIPreview   */
+
+
+UINT32 OV5648MIPIVideo(MSDK_SENSOR_EXPOSURE_WINDOW_STRUCT *image_window,
+                      MSDK_SENSOR_CONFIG_STRUCT *sensor_config_data)
+{
+    SENSORDB("Enter!");
+    
+    OV5648MIPI_Preview_Setting();
+
+    spin_lock(&ov5648mipi_drv_lock);
+    OV5648MIPI_sensor.ov5648mipi_sensor_mode = OV5648MIPI_SENSOR_MODE_VIDEO;
+    OV5648MIPI_sensor.videoPclk = OV5648MIPI_VIDEO_CLK;
+    OV5648MIPI_sensor.video_mode = KAL_TRUE;
+    OV5648MIPI_sensor.line_length = OV5648MIPI_PV_PERIOD_PIXEL_NUMS;
+    OV5648MIPI_sensor.frame_length = OV5648MIPI_PV_PERIOD_LINE_NUMS;    
+    OV5648MIPI_sensor.dummy_pixel = 0;
+    OV5648MIPI_sensor.dummy_line = 0;    
+    spin_unlock(&ov5648mipi_drv_lock);
+
+    SENSORDB("Exit!");
+    
+    return ERROR_NONE;
+}   /*  OV5648MIPIPreview   */
+
 
 UINT32 OV5648MIPIZSDPreview(MSDK_SENSOR_EXPOSURE_WINDOW_STRUCT *image_window,
                       MSDK_SENSOR_CONFIG_STRUCT *sensor_config_data)
@@ -1509,10 +1671,12 @@ UINT32 OV5648MIPIZSDPreview(MSDK_SENSOR_EXPOSURE_WINDOW_STRUCT *image_window,
 
     spin_lock(&ov5648mipi_drv_lock);
     OV5648MIPI_sensor.ov5648mipi_sensor_mode = OV5648MIPI_SENSOR_MODE_CAPTURE;
-    OV5648MIPI_sensor.pclk = OV5648MIPI_CAPTURE_CLK;
+    OV5648MIPI_sensor.capPclk = OV5648MIPI_CAPTURE_CLK;
     OV5648MIPI_sensor.video_mode = KAL_FALSE;
     OV5648MIPI_sensor.line_length = OV5648MIPI_FULL_PERIOD_PIXEL_NUMS;
     OV5648MIPI_sensor.frame_length = OV5648MIPI_FULL_PERIOD_LINE_NUMS;     
+    OV5648MIPI_sensor.dummy_pixel = 0;
+    OV5648MIPI_sensor.dummy_line = 0;    
     spin_unlock(&ov5648mipi_drv_lock);
 
     SENSORDB("Exit!");
@@ -1547,11 +1711,13 @@ UINT32 OV5648MIPICapture(MSDK_SENSOR_EXPOSURE_WINDOW_STRUCT *image_window,
         
     spin_lock(&ov5648mipi_drv_lock);
     OV5648MIPI_sensor.ov5648mipi_sensor_mode = OV5648MIPI_SENSOR_MODE_CAPTURE;
-    OV5648MIPI_sensor.pclk = OV5648MIPI_CAPTURE_CLK;
+    OV5648MIPI_sensor.capPclk = OV5648MIPI_CAPTURE_CLK;
     OV5648MIPI_sensor.video_mode = KAL_FALSE;    
     OV5648MIPIAutoFlickerMode = KAL_FALSE;
     OV5648MIPI_sensor.line_length = OV5648MIPI_FULL_PERIOD_PIXEL_NUMS;
     OV5648MIPI_sensor.frame_length = OV5648MIPI_FULL_PERIOD_LINE_NUMS;    
+    OV5648MIPI_sensor.dummy_pixel = 0;
+    OV5648MIPI_sensor.dummy_line = 0;    
     spin_unlock(&ov5648mipi_drv_lock);
 
     SENSORDB("Exit!");
@@ -1687,8 +1853,10 @@ UINT32 OV5648MIPIControl(MSDK_SCENARIO_ID_ENUM ScenarioId, MSDK_SENSOR_EXPOSURE_
     switch (ScenarioId)
     {
         case MSDK_SCENARIO_ID_CAMERA_PREVIEW:
-        case MSDK_SCENARIO_ID_VIDEO_PREVIEW:
             OV5648MIPIPreview(pImageWindow, pSensorConfigData);
+            break;
+        case MSDK_SCENARIO_ID_VIDEO_PREVIEW:
+            OV5648MIPIVideo(pImageWindow, pSensorConfigData);
             break;
         case MSDK_SCENARIO_ID_CAMERA_CAPTURE_JPEG:
             OV5648MIPICapture(pImageWindow, pSensorConfigData);
@@ -1708,7 +1876,9 @@ UINT32 OV5648MIPIControl(MSDK_SCENARIO_ID_ENUM ScenarioId, MSDK_SENSOR_EXPOSURE_
 
 UINT32 OV5648MIPISetVideoMode(UINT16 u2FrameRate)
 {
-    SENSORDB("u2FrameRate = %d ", u2FrameRate);
+    kal_uint32 MIN_Frame_length = 0, frameRate = 0, extralines = 0;
+
+    SENSORDB("u2FrameRate = %d ", u2FrameRate); 
 
     // SetVideoMode Function should fix framerate
     if(u2FrameRate < 5){
@@ -1716,35 +1886,70 @@ UINT32 OV5648MIPISetVideoMode(UINT16 u2FrameRate)
         return ERROR_NONE;
     }
 
-    spin_lock(&ov5648mipi_drv_lock);
-    OV5648MIPI_sensor.video_mode = KAL_TRUE;
-    spin_unlock(&ov5648mipi_drv_lock);
+    if(OV5648MIPI_sensor.ov5648mipi_sensor_mode == OV5648MIPI_SENSOR_MODE_VIDEO)//video ScenarioId recording
+    {
+    	if(OV5648MIPIAutoFlickerMode == KAL_TRUE)
+    	{
+    		if (u2FrameRate==30)
+				frameRate= 285;
+			else if(u2FrameRate==15)
+				frameRate= 146;
+			else
+				frameRate=u2FrameRate*10;
 
-    if(u2FrameRate == 30){
-        spin_lock(&ov5648mipi_drv_lock);
-        OV5648MIPI_sensor.NightMode = KAL_FALSE;
-        spin_unlock(&ov5648mipi_drv_lock);
-    }else if(u2FrameRate == 15){
-        spin_lock(&ov5648mipi_drv_lock);
-        OV5648MIPI_sensor.NightMode = KAL_TRUE;
-        spin_unlock(&ov5648mipi_drv_lock);
-    }else{
-        // fixed other frame rate
+			MIN_Frame_length = (OV5648MIPI_sensor.videoPclk)/(OV5648MIPI_PV_PERIOD_PIXEL_NUMS + OV5648MIPI_sensor.dummy_pixel)/frameRate*10;
+    	}
+		else
+			MIN_Frame_length = (OV5648MIPI_sensor.videoPclk)/(OV5648MIPI_PV_PERIOD_PIXEL_NUMS + OV5648MIPI_sensor.dummy_pixel)/u2FrameRate;
+
+		if((MIN_Frame_length <= OV5648MIPI_PV_PERIOD_LINE_NUMS))
+		{
+			MIN_Frame_length = OV5648MIPI_PV_PERIOD_LINE_NUMS;
+			SENSORDB("[OV5648SetVideoMode]current fps = %d\n", (OV5648MIPI_sensor.videoPclk)  /(OV5648MIPI_PV_PERIOD_PIXEL_NUMS)/OV5648MIPI_PV_PERIOD_LINE_NUMS);
+		}
+		SENSORDB("[OV5648SetVideoMode]current fps (10 base)= %d\n", (OV5648MIPI_sensor.videoPclk)*10/(OV5648MIPI_PV_PERIOD_PIXEL_NUMS + OV5648MIPI_sensor.dummy_pixel)/MIN_Frame_length);
+		extralines = MIN_Frame_length - OV5648MIPI_PV_PERIOD_LINE_NUMS;
+		
+		spin_lock(&ov5648mipi_drv_lock);
+		OV5648MIPI_sensor.dummy_pixel = 0;//define dummy pixels and lines
+		OV5648MIPI_sensor.dummy_line = extralines ;
+		spin_unlock(&ov5648mipi_drv_lock);
+		
+		OV5648MIPI_Set_Dummy(OV5648MIPI_sensor.dummy_pixel, OV5648MIPI_sensor.dummy_line);
     }
+	else if(OV5648MIPI_sensor.ov5648mipi_sensor_mode == OV5648MIPI_SENSOR_MODE_CAPTURE)
+	{
+		SENSORDB("-------[OV5648SetVideoMode]ZSD???---------\n");
+		if(OV5648MIPIAutoFlickerMode == KAL_TRUE)
+    	{
+    		if (u2FrameRate==15)
+			    frameRate= 146;
+			else
+				frameRate=u2FrameRate*10;
 
-    spin_lock(&ov5648mipi_drv_lock);
-    OV5648MIPI_sensor.FixedFps = u2FrameRate;
-    spin_unlock(&ov5648mipi_drv_lock);
+			MIN_Frame_length = (OV5648MIPI_sensor.capPclk) /(OV5648MIPI_FULL_PERIOD_PIXEL_NUMS + OV5648MIPI_sensor.dummy_pixel)/frameRate*10;
+    	}
+		else
+			MIN_Frame_length = (OV5648MIPI_sensor.capPclk) /(OV5648MIPI_FULL_PERIOD_PIXEL_NUMS + OV5648MIPI_sensor.dummy_pixel)/u2FrameRate;
 
-    if((u2FrameRate == 30)&&(OV5648MIPIAutoFlickerMode == KAL_TRUE))
-        u2FrameRate = 296;
-    else if ((u2FrameRate == 15)&&(OV5648MIPIAutoFlickerMode == KAL_TRUE))
-        u2FrameRate = 146;
-    else
-        u2FrameRate = 10 * u2FrameRate;
-    
-    OV5648MIPISetMaxFrameRate(u2FrameRate);
-    OV5648MIPI_Write_Shutter(OV5648MIPI_sensor.shutter);//From Meimei Video issue
+		if((MIN_Frame_length <=OV5648MIPI_FULL_PERIOD_LINE_NUMS))
+		{
+			MIN_Frame_length = OV5648MIPI_FULL_PERIOD_LINE_NUMS;
+			SENSORDB("[OV5648SetVideoMode]current fps = %d\n", (OV5648MIPI_sensor.capPclk) /(OV5648MIPI_FULL_PERIOD_PIXEL_NUMS)/OV5648MIPI_FULL_PERIOD_LINE_NUMS);
+
+		}
+		SENSORDB("[OV5648SetVideoMode]current fps (10 base)= %d\n", (OV5648MIPI_sensor.capPclk)*10/(OV5648MIPI_FULL_PERIOD_PIXEL_NUMS + OV5648MIPI_sensor.dummy_pixel)/MIN_Frame_length);
+
+		extralines = MIN_Frame_length - OV5648MIPI_FULL_PERIOD_LINE_NUMS;
+
+		spin_lock(&ov5648mipi_drv_lock);
+		OV5648MIPI_sensor.dummy_pixel = 0;//define dummy pixels and lines
+		OV5648MIPI_sensor.dummy_line= extralines ;
+		spin_unlock(&ov5648mipi_drv_lock);
+
+		OV5648MIPI_Set_Dummy(OV5648MIPI_sensor.dummy_pixel, OV5648MIPI_sensor.dummy_line);
+	}
+	SENSORDB("[OV5648SetVideoMode]MIN_Frame_length=%d, OV5648MIPI_sensor.dummy_line=%d\n", MIN_Frame_length, OV5648MIPI_sensor.dummy_line);
 
     return ERROR_NONE;
 }
@@ -1757,22 +1962,11 @@ UINT32 OV5648MIPISetAutoFlickerMode(kal_bool bEnable, UINT16 u2FrameRate)
         spin_lock(&ov5648mipi_drv_lock);
         OV5648MIPIAutoFlickerMode = KAL_TRUE;
         spin_unlock(&ov5648mipi_drv_lock);
-
-        /*Change frame rate 29.5fps to 29.8fps to do Auto flick*/
-        if((OV5648MIPI_sensor.FixedFps == 30)&&(OV5648MIPI_sensor.video_mode==KAL_TRUE))
-            OV5648MIPISetMaxFrameRate(296);
-        else if((OV5648MIPI_sensor.FixedFps == 15)&&(OV5648MIPI_sensor.video_mode==KAL_TRUE))
-            OV5648MIPISetMaxFrameRate(148);
         
     }else{ //Cancel Auto flick
         spin_lock(&ov5648mipi_drv_lock);
         OV5648MIPIAutoFlickerMode = KAL_FALSE;
         spin_unlock(&ov5648mipi_drv_lock);
-        
-        if((OV5648MIPI_sensor.FixedFps == 30)&&(OV5648MIPI_sensor.video_mode==KAL_TRUE))
-            OV5648MIPISetMaxFrameRate(300);
-        else if((OV5648MIPI_sensor.FixedFps == 15)&&(OV5648MIPI_sensor.video_mode==KAL_TRUE))
-            OV5648MIPISetMaxFrameRate(150);            
     }
 
     return ERROR_NONE;
@@ -1909,12 +2103,12 @@ UINT32 OV5648MIPIFeatureControl(MSDK_SENSOR_FEATURE_ENUM FeatureId,
             {
                 case MSDK_SCENARIO_ID_CAMERA_CAPTURE_JPEG:
                 case MSDK_SCENARIO_ID_CAMERA_ZSD:
-                    *pFeatureReturnPara16++ = OV5648MIPI_FULL_PERIOD_PIXEL_NUMS;
+                    *pFeatureReturnPara16++ = OV5648MIPI_sensor.line_length;
                     *pFeatureReturnPara16 = OV5648MIPI_sensor.frame_length;
                     *pFeatureParaLen=4;
                     break;
                 default:
-                    *pFeatureReturnPara16++ = OV5648MIPI_PV_PERIOD_PIXEL_NUMS;
+                    *pFeatureReturnPara16++ = OV5648MIPI_sensor.line_length;
                     *pFeatureReturnPara16 = OV5648MIPI_sensor.frame_length;
                     *pFeatureParaLen=4;
                     break;

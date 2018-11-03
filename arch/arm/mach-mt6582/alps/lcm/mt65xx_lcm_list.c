@@ -18,26 +18,14 @@
 #define LCD_DEBUG(fmt)  printk(fmt)
 #endif
 
-extern LCM_DRIVER nt35512_wvga_dsi_vdo_txd_lcm_drv;
-extern LCM_DRIVER otm8018b_wvga_dsi_vdo_dijing_lcm_drv;
-extern LCM_DRIVER otm8019a_wvga_dsi_vdo_dijing_lcm_drv;
-
+extern LCM_DRIVER ili9806e_fwvga_dsi_vdo_drv_lx8x;
 
 
 LCM_DRIVER* lcm_driver_list[] = 
 {
-#if defined(OTM8018B_WVGA_DSI_VDO_DIJING)
-	&otm8018b_wvga_dsi_vdo_dijing_lcm_drv,
+#if defined(ILI9806E_FWVGA_DSI_VDO_LX8X)
+        &ili9806e_fwvga_dsi_vdo_drv_lx8x,
 #endif
-
-#if defined(OTM8019A_WVGA_DSI_VDO_DIJING)
-	&otm8019a_wvga_dsi_vdo_dijing_lcm_drv,
-#endif
-  
-#if defined(NT35512_WVGA_DSI_VDO_TXD)
-	&nt35512_wvga_dsi_vdo_txd_lcm_drv,
-#endif
-
 
 };
 

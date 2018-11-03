@@ -12,17 +12,13 @@ ifeq ($(CONFIG_MTK_KXCJK_1013_AUTO),y)
 obj-y   +=  accelerometer/kxcjk_1013_auto/
 endif
 
+ifeq ($(CONFIG_MTK_KXTJ2_1009),y)
+obj-y   +=  accelerometer/KXTJ2_1009/
+endif
+
 ifeq ($(CONFIG_MTK_LIS3DH_AUTO),y)
 obj-y   +=  accelerometer/lis3dh_auto/
 endif
-
-#ifeq ($(CONFIG_MTK_MPU3000),y)
-#obj-y   +=  gyroscope/mpu3000/
-#endif
-
-#ifeq ($(CONFIG_MTK_MPU3000_NEW),y)
-#obj-y   +=  gyroscope/mpu3000-new/
-#endif
 
 ifeq ($(CONFIG_MTK_ST480_AUTO),y)
 obj-y	+=  magnetometer/st480_auto/
@@ -42,14 +38,10 @@ obj-y	+= dct/dct/
 endif
 
 obj-y   +=  lcm/
-#obj-y	+=  hdmi/
 obj-y	+=  camera/camera/
-obj-y	+=  imgsensor/t4k04_mipi_raw/
-obj-y	+=  imgsensor/ov12830_mipi_raw/
 obj-y	+=  imgsensor/ov5648_mipi_raw/
-obj-y	+=  imgsensor/ov5645_mipi_yuv/
-obj-y	+=  imgsensor/gc0311_yuv/
-obj-y	+=  imgsensor/hi708_yuv/
+obj-y	+=  imgsensor/ov2659_yuv/
+obj-y	+=  imgsensor/ov2686_yuv/
 obj-y   +=  flashlight/constant_flashlight/
 obj-y	+=  vibrator/
 obj-y	+=  leds/

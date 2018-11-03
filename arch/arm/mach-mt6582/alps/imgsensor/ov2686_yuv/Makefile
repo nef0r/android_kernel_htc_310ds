@@ -1,3 +1,4 @@
 include $(srctree)/drivers/misc/mediatek/Makefile.custom
 
-obj-y := pmic_drv.o
+obj-y	:=  ov2686yuv_Sensor.o
+

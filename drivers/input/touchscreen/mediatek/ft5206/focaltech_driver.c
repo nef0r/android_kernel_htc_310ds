@@ -24,6 +24,7 @@ extern void fts_release_sysfs(struct i2c_client * client);
 extern int ft5x0x_create_apk_debug_channel(struct i2c_client *client);
 extern void ft5x0x_release_apk_debug_channel(void);
 #endif
+#define TPD_PROXIMITY
 #ifdef TPD_PROXIMITY
 #include <linux/hwmsensor.h>
 #include <linux/hwmsen_dev.h>
@@ -600,7 +601,7 @@ reset_proc:
 
 #ifdef TPD_PROXIMITY
 	struct hwmsen_object obj_ps;
-	
+	int err = 0;
 	obj_ps.polling = 0;//interrupt mode
 	obj_ps.sensor_operate = tpd_ps_operate;
 	if((err = hwmsen_attach(ID_PROXIMITY, &obj_ps)))

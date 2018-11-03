@@ -60,8 +60,8 @@ u32 pinSet[2][8] = {
                         GPIO_CAMERA_CMRST_PIN_M_GPIO,   /* mode */
                         GPIO_OUT_ONE,                   /* ON state */
                         GPIO_OUT_ZERO,                  /* OFF state */
-                     GPIO_CAMERA_CMPDN_PIN,
-                        GPIO_CAMERA_CMPDN_PIN_M_GPIO,
+                     GPIO_CAMERA_CMPDN1_PIN,
+                        GPIO_CAMERA_CMPDN1_PIN_M_GPIO,
                         GPIO_OUT_ONE,
                         GPIO_OUT_ZERO,
                     },

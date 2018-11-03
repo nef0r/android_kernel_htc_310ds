@@ -559,8 +559,8 @@ typedef struct
 #define REGFLAG_ESCAPE_ID		(0x00)
 #define REGFLAG_DELAY_MS_V3		(0xFF)
 
-#define REGFLAG_DELAY                                         0xAB
-#define REGFLAG_END_OF_TABLE                                  0xAA   // END OF REGISTERS MARKER
+#define REGFLAG_DELAY                                         0xFE
+#define REGFLAG_END_OF_TABLE                                  0xFFF   // END OF REGISTERS MARKER
 
 typedef struct {
     unsigned char id;    

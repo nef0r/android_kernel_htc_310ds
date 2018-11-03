@@ -105,6 +105,10 @@ ifeq ($(CONFIG_MTK_FT5206),y)
 obj-y	+=  ft5206/
 endif
 
+ifeq ($(CONFIG_MTK_FT6X06),y)
+obj-y	+=  ft5206/
+endif
+
 ifeq ($(CONFIG_TOUCHSCREEN_MTK_GT9XX_2),y)
 obj-y	+=  GT9XX_2/
 endif

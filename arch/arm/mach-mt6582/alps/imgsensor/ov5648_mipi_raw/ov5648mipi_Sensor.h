@@ -119,8 +119,8 @@ struct OV5648MIPI_otp_struct
 	kal_uint16 bg_ratio;
 	kal_uint16 gb_gr_ratio;	
 };
-#define RG_Typical 0x170
-#define BG_Typical 0x15a
+#define RG_Typical 0x293
+#define BG_Typical 0x2F4
 #define GB_GR_Typical 0x3FC
 #endif
 //OTP Code End
