@@ -1,3 +1,4 @@
 include $(srctree)/drivers/misc/mediatek/Makefile.custom
 
-obj-y	:= bf3905mipi_Sensor.o
+obj-y	:=  ov2659yuv_Sensor.o
+
