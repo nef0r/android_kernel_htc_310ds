@@ -39,9 +39,9 @@ endif
 
 obj-y   +=  lcm/
 obj-y	+=  camera/camera/
-obj-y	+=  imgsensor/ov5648_mipi_raw/
-obj-y	+=  imgsensor/ov2659_yuv/
-obj-y	+=  imgsensor/ov2686_yuv/
+obj-y	+=  imgsensor/a5142_liteon_mipi_raw/
+obj-y	+=  imgsensor/a5142_qtech_mipi_raw/
+obj-y	+=  imgsensor/bf3905_mipi_yuv/
 obj-y   +=  flashlight/constant_flashlight/
 obj-y	+=  vibrator/
 obj-y	+=  leds/
